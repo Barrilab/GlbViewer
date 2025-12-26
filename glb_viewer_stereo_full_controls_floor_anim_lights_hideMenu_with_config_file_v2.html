@@ -1,0 +1,1717 @@
+<!doctype html>
+<html lang="en">
+<head>
+   <script type="importmap">
+   {
+    "imports": {
+     "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+     "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+   }
+   }
+   </script>
+
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Working Drag & Drop Blender GLB Viewer (Stereo + BG + Floor + Anim + Lights)</title>
+  <style>
+    html, body { margin:0; height:100%; overflow:hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    #c { width:100%; height:100%; display:block; background:#87CEEB; }
+
+    #ui {
+      position: fixed; left: 12px; top: 12px; z-index: 10;
+      background: rgba(255,255,255,.82); backdrop-filter: blur(8px);
+      border: 1px solid rgba(0,0,0,.10);
+      border-radius: 14px; padding: 10px 12px; max-width: 720px;
+      color: #0d1117;
+    }
+    #ui h1 { font-size: 14px; margin: 0 0 6px; font-weight: 800; }
+    #ui p { margin: 6px 0; font-size: 12px; line-height: 1.35; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top: 8px; }
+    button, input[type="file"], select, input[type="color"] {
+      font-size: 12px; border-radius: 12px; padding: 8px 10px;
+      border: 1px solid rgba(0,0,0,.14); background: rgba(255,255,255,.95);
+      cursor: pointer;
+    }
+    button:hover { background: #fff; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+
+    input[type="range"] { padding: 0; height: 18px; }
+
+    #drop {
+      position: fixed; inset: 0; display:none; place-items:center; z-index: 9;
+      background: rgba(135,206,235,.45);
+      border: 3px dashed rgba(0,0,0,.25);
+    }
+    #drop .box {
+      background: rgba(255,255,255,.92);
+      border: 1px solid rgba(0,0,0,.14);
+      border-radius: 18px;
+      padding: 18px 22px;
+      font-size: 14px;
+    }
+
+    #panel {
+      position: fixed; right: 12px; top: 12px; z-index: 10;
+      background: rgba(255,255,255,.75); backdrop-filter: blur(8px);
+      border: 1px solid rgba(0,0,0,.10);
+      border-radius: 14px; padding: 10px 12px;
+      font-size: 12px; color: #0d1117; min-width: 320px;
+    }
+    #panel .k { opacity: .75; }
+    #status {
+      margin-top: 6px;
+      padding: 8px 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(0,0,0,.10);
+      background: rgba(135,206,235,.20);
+      white-space: pre-wrap;
+    }
+
+    #errors {
+      position: fixed; left: 12px; bottom: 12px; z-index: 11;
+      max-width: min(860px, calc(100vw - 24px));
+      background: rgba(10,10,12,.86); color: #f2f5f8;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 14px; padding: 10px 12px;
+      font-size: 12px; display:none;
+      white-space: pre-wrap;
+    }
+
+    .k { opacity: .75; }
+
+    details {
+      margin-top: 10px;
+      border-radius: 14px;
+      border: 1px solid rgba(0,0,0,.10);
+      background: rgba(255,255,255,.55);
+      padding: 8px 10px;
+    }
+    details > summary {
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 800;
+      user-select: none;
+      list-style: none;
+    }
+    details > summary::-webkit-details-marker { display:none; }
+    .lightCard {
+      margin-top: 10px;
+      border: 1px solid rgba(0,0,0,.10);
+      border-radius: 14px;
+      padding: 10px;
+      background: rgba(255,255,255,.70);
+    }
+    .lightTitle { font-weight: 800; font-size: 12px; margin-bottom: 6px; }
+    .mini { font-size: 11px; opacity: .8; }
+
+    /* UI hide/show toggle */
+    #uiToggle{
+      position: fixed; left: 12px; bottom: 12px; z-index: 12;
+      font-size: 12px; border-radius: 14px; padding: 10px 12px;
+      border: 1px solid rgba(0,0,0,.14); background: rgba(255,255,255,.88);
+      backdrop-filter: blur(8px);
+      cursor: pointer;
+    }
+    #uiToggle:hover { background: rgba(255,255,255,.98); }
+    body.ui-hidden #ui,
+    body.ui-hidden #panel,
+    body.ui-hidden #errors { display: none !important; }
+
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <button id="uiToggle" title="Hide/Show UI (H)">Hide UI (H)</button>
+
+  <div id="ui">
+    <h1>Working Blender .GLB Viewer</h1>
+    <p>Drop a <code>.glb</code> exported from Blender anywhere on the page, or use the file picker.</p>
+    <p>Mouse: <b>Left</b>=orbit • <b>Wheel</b>=zoom • <b>Right</b>=pan</p>
+
+    <div class="row">
+      <input id="file" type="file" accept=".glb,model/gltf-binary" />
+      <button id="focus">Focus model</button>
+      <button id="reset">Reset view</button>
+      <button id="clear">Clear</button>
+      <button id="hideErr">Hide errors</button>
+    </div>
+    <div class="row">
+      <button id="linkFolder" title="Pick the folder where this HTML file lives (for saving config)">Link folder</button>
+      <button id="saveCfg" title="Save settings to glb_viewer_config.txt">Save settings</button>
+      <button id="loadCfg" title="Load settings from glb_viewer_config.txt">Load settings</button>
+      <span id="cfgStatus" class="mini">Config: not linked</span>
+    </div>
+
+
+    <div class="row">
+      <label style="display:flex; gap:8px; align-items:center;">
+        <input id="stereo" type="checkbox" />
+        <span><b>Stereo</b> — side-by-side output</span>
+      </label>
+
+      <label style="display:flex; gap:8px; align-items:center;">
+        <span class="k">Mode</span>
+        <select id="stereoMode" title="Stereo mode">
+          <option value="cross">Cross-eyed</option>
+          <option value="parallel">Parallel (wall-eye)</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label style="display:flex; gap:8px; align-items:center; width:100%;">
+        <span><b>IPD</b></span>
+        <input id="ipd" type="range" min="0.05" max="0.30" step="0.005" value="0.15" style="flex:1;">
+        <span id="ipdVal">15 cm</span>
+      </label>
+    </div>
+
+    <div class="row">
+      <label style="display:flex; gap:8px; align-items:center; width:100%;">
+        <span><b>Depth</b></span>
+        <input id="depth" type="range" min="0.50" max="3.00" step="0.05" value="1.00" style="flex:1;">
+        <span id="depthVal">1.00×</span>
+      </label>
+    </div>
+
+    <div class="row">
+      <label style="display:flex; gap:8px; align-items:center;">
+        <span><b>Background</b></span>
+        <input id="bg" type="color" value="#87CEEB" title="Background color">
+      </label>
+      <button id="bgSky">Sky</button>
+      <button id="bgGray">Studio</button>
+      <button id="bgBlack">Black</button>
+    </div>
+
+    <div class="row">
+      <label style="display:flex; gap:8px; align-items:center;">
+        <span><b>Floor</b></span>
+        <input id="floor" type="color" value="#E9EEF3" title="Floor color">
+      </label>
+      <button id="floorLight">Light</button>
+      <button id="floorMid">Mid</button>
+      <button id="floorDark">Dark</button>
+    </div>
+
+    <div class="row">
+      <label style="display:flex; gap:8px; align-items:center;">
+        <input id="playAnim" type="checkbox" />
+        <span><b>Play animations</b></span>
+      </label>
+
+      <label style="display:flex; gap:8px; align-items:center; width:260px;">
+        <span class="k">Speed</span>
+        <input id="animSpeed" type="range" min="0.0" max="2.0" step="0.05" value="1.0" style="flex:1;">
+        <span id="animSpeedVal">1.00×</span>
+      </label>
+    </div>
+
+    <div class="row">
+      <select id="animClip" title="Animation clip" style="min-width: 240px;">
+        <option value="">Animation clip…</option>
+      </select>
+      <button id="restartAnim">Restart</button>
+    </div>
+
+    <details open>
+      <summary>Lights (add up to 4 • move / color / intensity)</summary>
+
+      <div class="row" style="margin-top:10px;">
+        <label style="display:flex; gap:8px; align-items:center;">
+          <input id="dragLights" type="checkbox" checked />
+          <span><b>Drag lights</b> (click a light orb)</span>
+        </label>
+
+        <label style="display:flex; gap:8px; align-items:center;">
+          <input id="showLightHelpers" type="checkbox" checked />
+          <span>Show helpers</span>
+        </label>
+
+        <label style="display:flex; gap:8px; align-items:center;">
+          <span class="k">Gizmo</span>
+          <select id="gizmoMode">
+            <option value="translate">Move</option>
+            <option value="rotate">Rotate</option>
+          </select>
+        </label>
+
+        <label style="display:flex; gap:8px; align-items:center;">
+          <span class="k">Selected</span>
+          <select id="selectedLight">
+            <option value="0">Light 1</option>
+            <option value="1">Light 2</option>
+            <option value="2">Light 3</option>
+            <option value="3">Light 4</option>
+          </select>
+        </label>
+
+        <button id="resetLights">Reset lights</button>
+      </div>
+
+      <div class="mini">Tip: Enable <b>Drag lights</b>, then click a colored orb in the scene to move it.</div>
+
+      <!-- Light 1 -->
+      <div class="lightCard">
+        <div class="lightTitle">Light 1</div>
+        <div class="row">
+          <label style="display:flex; gap:8px; align-items:center;">
+            <input id="l1_on" type="checkbox" checked />
+            <span>Enabled</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center;">
+            <span class="k">Color</span>
+            <input id="l1_color" type="color" value="#ffffff" />
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:250px;">
+            <span class="k">Intensity</span>
+            <input id="l1_int" type="range" min="0" max="20" step="0.1" value="2.5" style="flex:1;">
+            <span id="l1_intv">2.5</span>
+          </label>
+        </div>
+        <div class="row">
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">X</span><input id="l1_x" type="range" min="-10" max="10" step="0.1" value="3" style="flex:1;"><span id="l1_xv">3.0</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">Y</span><input id="l1_y" type="range" min="0" max="20" step="0.1" value="6" style="flex:1;"><span id="l1_yv">6.0</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">Z</span><input id="l1_z" type="range" min="-10" max="10" step="0.1" value="4" style="flex:1;"><span id="l1_zv">4.0</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Light 2 -->
+      <div class="lightCard">
+        <div class="lightTitle">Light 2</div>
+        <div class="row">
+          <label style="display:flex; gap:8px; align-items:center;">
+            <input id="l2_on" type="checkbox" />
+            <span>Enabled</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center;">
+            <span class="k">Color</span>
+            <input id="l2_color" type="color" value="#ffcc88" />
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:250px;">
+            <span class="k">Intensity</span>
+            <input id="l2_int" type="range" min="0" max="20" step="0.1" value="1.5" style="flex:1;">
+            <span id="l2_intv">1.5</span>
+          </label>
+        </div>
+        <div class="row">
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">X</span><input id="l2_x" type="range" min="-10" max="10" step="0.1" value="-4" style="flex:1;"><span id="l2_xv">-4.0</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">Y</span><input id="l2_y" type="range" min="0" max="20" step="0.1" value="4" style="flex:1;"><span id="l2_yv">4.0</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">Z</span><input id="l2_z" type="range" min="-10" max="10" step="0.1" value="-3" style="flex:1;"><span id="l2_zv">-3.0</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Light 3 -->
+      <div class="lightCard">
+        <div class="lightTitle">Light 3</div>
+        <div class="row">
+          <label style="display:flex; gap:8px; align-items:center;">
+            <input id="l3_on" type="checkbox" />
+            <span>Enabled</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center;">
+            <span class="k">Color</span>
+            <input id="l3_color" type="color" value="#88ccff" />
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:250px;">
+            <span class="k">Intensity</span>
+            <input id="l3_int" type="range" min="0" max="20" step="0.1" value="1.2" style="flex:1;">
+            <span id="l3_intv">1.2</span>
+          </label>
+        </div>
+        <div class="row">
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">X</span><input id="l3_x" type="range" min="-10" max="10" step="0.1" value="0" style="flex:1;"><span id="l3_xv">0.0</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">Y</span><input id="l3_y" type="range" min="0" max="20" step="0.1" value="8" style="flex:1;"><span id="l3_yv">8.0</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">Z</span><input id="l3_z" type="range" min="-10" max="10" step="0.1" value="0" style="flex:1;"><span id="l3_zv">0.0</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Light 4 -->
+      <div class="lightCard">
+        <div class="lightTitle">Light 4</div>
+        <div class="row">
+          <label style="display:flex; gap:8px; align-items:center;">
+            <input id="l4_on" type="checkbox" />
+            <span>Enabled</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center;">
+            <span class="k">Color</span>
+            <input id="l4_color" type="color" value="#ffffff" />
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:250px;">
+            <span class="k">Intensity</span>
+            <input id="l4_int" type="range" min="0" max="20" step="0.1" value="0.8" style="flex:1;">
+            <span id="l4_intv">0.8</span>
+          </label>
+        </div>
+        <div class="row">
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">X</span><input id="l4_x" type="range" min="-10" max="10" step="0.1" value="6" style="flex:1;"><span id="l4_xv">6.0</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">Y</span><input id="l4_y" type="range" min="0" max="20" step="0.1" value="2" style="flex:1;"><span id="l4_yv">2.0</span>
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; width:220px;">
+            <span class="k">Z</span><input id="l4_z" type="range" min="-10" max="10" step="0.1" value="6" style="flex:1;"><span id="l4_zv">6.0</span>
+          </label>
+        </div>
+      </div>
+    </details>
+
+    <div class="row">
+      <select id="samples">
+        <option value="">Sample models…</option>
+        <option value="https://threejs.org/examples/models/gltf/DamagedHelmet/glTF-Binary/DamagedHelmet.glb">Damaged Helmet</option>
+        <option value="https://threejs.org/examples/models/gltf/LittlestTokyo.glb">Littlest Tokyo</option>
+      </select>
+      <button id="loadSample">Load sample</button>
+    </div>
+
+    <p style="margin-top:8px; opacity:.84;">
+      Run with a local server (recommended):<br/>
+      <code>python -m http.server 8000</code> then open <code>http://localhost:8000</code>
+    </p>
+  </div>
+
+  <div id="panel">
+    <div><span class="k">Model:</span> <span id="modelName">—</span></div>
+    <div><span class="k">Triangles:</span> <span id="tris">—</span></div>
+    <div><span class="k">Draw calls:</span> <span id="draws">—</span></div>
+    <div><span class="k">FPS:</span> <span id="fps">—</span></div>
+    <div><span class="k">Animations:</span> <span id="animInfo">—</span></div>
+    <div><span class="k">Light:</span> <span id="lightStatus">Click a light orb to select</span></div>
+    <div id="status">Status: idle (load a sample or drop a .glb)</div>
+  </div>
+
+  <div id="drop"><div class="box">Drop your <b>.glb</b> here</div></div>
+  <div id="errors"></div>
+
+<script type="module">
+  import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+  import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+  import { TransformControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/TransformControls.js";
+  import { GLTFLoader } from "https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js";
+  import { DRACOLoader } from "https://unpkg.com/three@0.160.0/examples/jsm/loaders/DRACOLoader.js";
+
+  const canvas = document.getElementById("c");
+  const drop = document.getElementById("drop");
+  const fileInput = document.getElementById("file");
+
+  const modelNameEl = document.getElementById("modelName");
+  const trisEl = document.getElementById("tris");
+  const drawsEl = document.getElementById("draws");
+  const fpsEl = document.getElementById("fps");
+  const animInfoEl = document.getElementById("animInfo");
+  const lightStatusEl = document.getElementById("lightStatus");
+  const statusEl = document.getElementById("status");
+  const errorsEl = document.getElementById("errors");
+
+  const uiEl = document.getElementById("ui");
+  const panelEl = document.getElementById("panel");
+  const uiToggleBtn = document.getElementById("uiToggle");
+
+  function isEditableTarget(el) {
+    if (!el) return false;
+    const tag = (el.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable;
+  }
+
+  function setUIHidden(hidden) {
+    document.body.classList.toggle("ui-hidden", !!hidden);
+    if (uiToggleBtn) {
+      uiToggleBtn.textContent = hidden ? "Show UI (H)" : "Hide UI (H)";
+      uiToggleBtn.setAttribute("aria-pressed", hidden ? "true" : "false");
+    }
+    // Restore error visibility if we re-show the UI and there is an error message
+    if (!hidden) {
+      if (errorsEl && errorsEl.textContent.trim().length) errorsEl.style.display = "block";
+    }
+    try { localStorage.setItem("uiHidden", hidden ? "1" : "0"); } catch {}
+  }
+
+  function toggleUI() {
+    const hidden = document.body.classList.contains("ui-hidden");
+    setUIHidden(!hidden);
+  }
+
+  if (uiToggleBtn) uiToggleBtn.addEventListener("click", toggleUI);
+
+  // Keyboard shortcuts:
+  //   H = hide/show all UI boxes (when not typing in a field)
+  //   Esc = always show UI
+  window.addEventListener("keydown", (e) => {
+    if (e.repeat) return;
+    if (isEditableTarget(document.activeElement)) return;
+
+    const k = (e.key || "").toLowerCase();
+    if (k === "h") {
+      e.preventDefault();
+      toggleUI();
+    } else if (e.key === "Escape") {
+      setUIHidden(false);
+    }
+  });
+
+  // Restore UI state
+  try { setUIHidden(localStorage.getItem("uiHidden") === "1"); } catch { setUIHidden(false); }
+
+
+  const focusBtn = document.getElementById("focus");
+  const resetBtn = document.getElementById("reset");
+  const clearBtn = document.getElementById("clear");
+  const hideErrBtn = document.getElementById("hideErr");
+
+  // Config persistence UI
+  const linkFolderBtn = document.getElementById("linkFolder");
+  const saveCfgBtn = document.getElementById("saveCfg");
+  const loadCfgBtn = document.getElementById("loadCfg");
+  const cfgStatusEl = document.getElementById("cfgStatus");
+
+  const samples = document.getElementById("samples");
+  const loadSampleBtn = document.getElementById("loadSample");
+
+  const stereoToggle = document.getElementById("stereo");
+  const stereoModeSel = document.getElementById("stereoMode");
+
+  const ipdSlider = document.getElementById("ipd");
+  const ipdVal = document.getElementById("ipdVal");
+
+  const depthSlider = document.getElementById("depth");
+  const depthVal = document.getElementById("depthVal");
+
+  const bgPicker = document.getElementById("bg");
+  const bgSkyBtn = document.getElementById("bgSky");
+  const bgGrayBtn = document.getElementById("bgGray");
+  const bgBlackBtn = document.getElementById("bgBlack");
+
+  const floorPicker = document.getElementById("floor");
+  const floorLightBtn = document.getElementById("floorLight");
+  const floorMidBtn = document.getElementById("floorMid");
+  const floorDarkBtn = document.getElementById("floorDark");
+
+  const playAnimToggle = document.getElementById("playAnim");
+  const animSpeedSlider = document.getElementById("animSpeed");
+  const animSpeedVal = document.getElementById("animSpeedVal");
+  const animClipSel = document.getElementById("animClip");
+  const restartAnimBtn = document.getElementById("restartAnim");
+
+  // Lights UI
+  const dragLightsToggle = document.getElementById("dragLights");
+  const showLightHelpersToggle = document.getElementById("showLightHelpers");
+  const gizmoModeSel = document.getElementById("gizmoMode");
+  const selectedLightSel = document.getElementById("selectedLight");
+  const resetLightsBtn = document.getElementById("resetLights");
+
+  function setStatus(s) { statusEl.textContent = "Status: " + s; }
+  function showError(title, err) {
+    const msg = err?.stack || err?.message || String(err);
+    errorsEl.style.display = "block";
+    errorsEl.textContent = `⚠ ${title}\n\n${msg}`;
+    console.error(title, err);
+  }
+  function clearError() { errorsEl.style.display = "none"; errorsEl.textContent = ""; }
+  hideErrBtn.onclick = clearError;
+
+  // Renderer
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  // Scene
+  const scene = new THREE.Scene();
+
+  // Background helper
+  function setBackground(hex) {
+    const c = new THREE.Color(hex);
+    scene.background = c;
+    renderer.setClearColor(c, 1);
+    canvas.style.background = hex;
+    if (bgPicker) bgPicker.value = hex;
+  }
+  setBackground("#87CEEB");
+  if (bgPicker) bgPicker.addEventListener("input", () => setBackground(bgPicker.value));
+  if (bgSkyBtn) bgSkyBtn.onclick = () => setBackground("#87CEEB");
+  if (bgGrayBtn) bgGrayBtn.onclick = () => setBackground("#DDE2E8");
+  if (bgBlackBtn) bgBlackBtn.onclick = () => setBackground("#000000");
+
+  // Camera
+  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 10000);
+  camera.position.set(3, 2, 4);
+
+  // Stereo cameras
+  const cameraL = new THREE.PerspectiveCamera(camera.fov, camera.aspect, camera.near, camera.far);
+  const cameraR = new THREE.PerspectiveCamera(camera.fov, camera.aspect, camera.near, camera.far);
+
+  // IPD and Depth Multiplier
+  let IPD = 0.15;  // 1 unit ~ 1m
+  let DEPTH = 1.0;
+
+  function syncIPDUI() {
+    if (!ipdSlider) return;
+    IPD = parseFloat(ipdSlider.value);
+    if (ipdVal) ipdVal.textContent = `${Math.round(IPD * 100)} cm`;
+  }
+  function syncDepthUI() {
+    if (!depthSlider) return;
+    DEPTH = parseFloat(depthSlider.value);
+    if (depthVal) depthVal.textContent = `${DEPTH.toFixed(2)}×`;
+  }
+  if (ipdSlider) { syncIPDUI(); ipdSlider.addEventListener("input", syncIPDUI); }
+  if (depthSlider) { syncDepthUI(); depthSlider.addEventListener("input", syncDepthUI); }
+
+  // Controls
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.06;
+  controls.screenSpacePanning = true;
+  controls.target.set(0, 1, 0);
+
+  // Transform controls for light dragging
+  const tcontrols = new TransformControls(camera, renderer.domElement);
+  tcontrols.setMode("translate");
+  tcontrols.addEventListener("dragging-changed", (e) => {
+    controls.enabled = !e.value;
+  });
+  scene.add(tcontrols);
+
+  if (gizmoModeSel) {
+    gizmoModeSel.addEventListener("change", () => {
+      const mode = gizmoModeSel.value === "rotate" ? "rotate" : "translate";
+      tcontrols.setMode(mode);
+    });
+  }
+
+  // Base lighting
+  scene.add(new THREE.HemisphereLight(0xbfe9ff, 0x6b5a45, 1.15));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.15);
+  sun.position.set(6, 10, 4);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.near = 0.1;
+  sun.shadow.camera.far = 120;
+  sun.shadow.camera.left = -30;
+  sun.shadow.camera.right = 30;
+  sun.shadow.camera.top = 30;
+  sun.shadow.camera.bottom = -30;
+  scene.add(sun);
+
+  // Ground (floor)
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0xe9eef3, roughness: 0.95, metalness: 0.0 });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  function setFloorColor(hex) {
+    groundMat.color.set(hex);
+    if (floorPicker) floorPicker.value = hex;
+  }
+  if (floorPicker) floorPicker.addEventListener("input", () => setFloorColor(floorPicker.value));
+  if (floorLightBtn) floorLightBtn.onclick = () => setFloorColor("#E9EEF3");
+  if (floorMidBtn) floorMidBtn.onclick = () => setFloorColor("#B7C0CC");
+  if (floorDarkBtn) floorDarkBtn.onclick = () => setFloorColor("#2A2F36");
+  setFloorColor("#E9EEF3");
+
+  // --- Custom user lights (up to 4) ---
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+
+  function makeLightOrb(colorHex) {
+    const geo = new THREE.SphereGeometry(0.08, 24, 24);
+    const mat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(colorHex),
+      emissive: new THREE.Color(colorHex),
+      emissiveIntensity: 0.8,
+      roughness: 0.2,
+      metalness: 0.0
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    return mesh;
+  }
+
+  function makePointLight(colorHex, intensity, pos) {
+    const light = new THREE.PointLight(colorHex, intensity, 0, 2);
+    light.position.copy(pos);
+    light.castShadow = true;
+    light.shadow.mapSize.set(1024, 1024);
+    light.shadow.bias = -0.00005;
+
+    const orb = makeLightOrb(colorHex);
+    orb.position.copy(pos);
+    orb.userData.isLightOrb = true;
+
+    // Helper
+    const helper = new THREE.PointLightHelper(light, 0.25, colorHex);
+
+    // Keep orb + helper synced
+    orb.userData.light = light;
+    orb.userData.helper = helper;
+
+    scene.add(light);
+    scene.add(orb);
+    scene.add(helper);
+
+    return { light, orb, helper };
+  }
+
+  const defaultLightStates = [
+    { on:true,  color:"#ffffff", int:2.5, x: 3, y: 6, z: 4 },
+    { on:false, color:"#ffcc88", int:1.5, x:-4, y: 4, z:-3 },
+    { on:false, color:"#88ccff", int:1.2, x: 0, y: 8, z: 0 },
+    { on:false, color:"#ffffff", int:0.8, x: 6, y: 2, z: 6 },
+  ];
+
+  const userLights = [
+    makePointLight(defaultLightStates[0].color, defaultLightStates[0].int, new THREE.Vector3(defaultLightStates[0].x, defaultLightStates[0].y, defaultLightStates[0].z)),
+    makePointLight(defaultLightStates[1].color, defaultLightStates[1].int, new THREE.Vector3(defaultLightStates[1].x, defaultLightStates[1].y, defaultLightStates[1].z)),
+    makePointLight(defaultLightStates[2].color, defaultLightStates[2].int, new THREE.Vector3(defaultLightStates[2].x, defaultLightStates[2].y, defaultLightStates[2].z)),
+    makePointLight(defaultLightStates[3].color, defaultLightStates[3].int, new THREE.Vector3(defaultLightStates[3].x, defaultLightStates[3].y, defaultLightStates[3].z)),
+  ];
+
+  // Apply enabled defaults
+  userLights.forEach((L, i) => {
+    L.light.visible = defaultLightStates[i].on;
+    L.orb.visible = defaultLightStates[i].on;
+    L.helper.visible = defaultLightStates[i].on;
+  });
+
+  function setHelperVisibility(on) {
+    userLights.forEach(L => L.helper.visible = on && L.light.visible);
+  }
+  if (showLightHelpersToggle) {
+    showLightHelpersToggle.addEventListener("change", () => setHelperVisibility(showLightHelpersToggle.checked));
+    setHelperVisibility(showLightHelpersToggle.checked);
+  } else {
+    setHelperVisibility(true);
+  }
+
+  function updateOrbMaterial(L, colorHex) {
+    // Orb mesh
+    if (L?.orb?.material) {
+      if (L.orb.material.color?.set) L.orb.material.color.set(colorHex);
+      if (L.orb.material.emissive?.set) L.orb.material.emissive.set(colorHex);
+    }
+
+    // Helper color (Three.js helpers differ: some expose helper.material.color, some helper.color, some neither)
+    const h = L?.helper;
+    if (!h) return;
+
+    // PointLightHelper / DirectionalLightHelper: often uses material.color
+    if (h.material?.color?.set) h.material.color.set(colorHex);
+
+    // Some helpers expose a THREE.Color at helper.color
+    if (h.color && typeof h.color === "object" && typeof h.color.set === "function") {
+      h.color.set(colorHex);
+    } else if (typeof h.color === "number") {
+      // In some revisions helper.color is a numeric hex; keep it in sync too
+      h.color = new THREE.Color(colorHex).getHex();
+    }
+
+    if (typeof h.update === "function") h.update();
+  }
+
+  function syncLightTransforms(L) {
+    L.light.position.copy(L.orb.position);
+    if (L.helper) L.helper.update();
+  }
+
+  function setLightEnabled(i, enabled) {
+    const L = userLights[i];
+    L.light.visible = enabled;
+    L.orb.visible = enabled;
+    L.helper.visible = enabled && (showLightHelpersToggle?.checked ?? true);
+    if (!enabled && tcontrols.object === L.orb) {
+      tcontrols.detach();
+      lightStatusEl.textContent = "No light selected";
+    }
+  }
+
+  function setLightColor(i, hex) {
+    const L = userLights[i];
+    L.light.color.set(hex);
+    updateOrbMaterial(L, hex);
+  }
+
+  function setLightIntensity(i, v) {
+    const L = userLights[i];
+    L.light.intensity = v;
+  }
+
+  function setLightPos(i, x, y, z) {
+    const L = userLights[i];
+    L.orb.position.set(x, y, z);
+    syncLightTransforms(L);
+  }
+
+  function attachToLight(i) {
+    const L = userLights[i];
+    if (!L.orb.visible || !(dragLightsToggle?.checked ?? true)) return;
+
+    tcontrols.attach(L.orb);
+    selectedLightSel.value = String(i);
+    lightStatusEl.textContent = `Selected: Light ${i+1}`;
+  }
+
+  // When transform controls move the orb, update sliders
+  tcontrols.addEventListener("objectChange", () => {
+    const obj = tcontrols.object;
+    if (!obj) return;
+    const idx = userLights.findIndex(L => L.orb === obj);
+    if (idx < 0) return;
+
+    syncLightTransforms(userLights[idx]);
+    // Push into sliders
+    const x = obj.position.x, y = obj.position.y, z = obj.position.z;
+    const map = [
+      {x:"l1_x", y:"l1_y", z:"l1_z", xv:"l1_xv", yv:"l1_yv", zv:"l1_zv"},
+      {x:"l2_x", y:"l2_y", z:"l2_z", xv:"l2_xv", yv:"l2_yv", zv:"l2_zv"},
+      {x:"l3_x", y:"l3_y", z:"l3_z", xv:"l3_xv", yv:"l3_yv", zv:"l3_zv"},
+      {x:"l4_x", y:"l4_y", z:"l4_z", xv:"l4_xv", yv:"l4_yv", zv:"l4_zv"},
+    ][idx];
+
+    const sx = document.getElementById(map.x);
+    const sy = document.getElementById(map.y);
+    const sz = document.getElementById(map.z);
+    const sxv = document.getElementById(map.xv);
+    const syv = document.getElementById(map.yv);
+    const szv = document.getElementById(map.zv);
+
+    if (sx) sx.value = String(x);
+    if (sy) sy.value = String(y);
+    if (sz) sz.value = String(z);
+
+    if (sxv) sxv.textContent = x.toFixed(1);
+    if (syv) syv.textContent = y.toFixed(1);
+    if (szv) szv.textContent = z.toFixed(1);
+  });
+
+  // Click-to-select light orbs
+  function onPointerDown(ev) {
+    if (!(dragLightsToggle?.checked ?? true)) return;
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(pointer, camera);
+
+    const orbs = userLights.map(L => L.orb).filter(o => o.visible);
+    const hits = raycaster.intersectObjects(orbs, false);
+    if (!hits.length) return;
+
+    const hitOrb = hits[0].object;
+    const idx = userLights.findIndex(L => L.orb === hitOrb);
+    if (idx >= 0) attachToLight(idx);
+  }
+  renderer.domElement.addEventListener("pointerdown", onPointerDown);
+
+  if (selectedLightSel) {
+    selectedLightSel.addEventListener("change", () => {
+      const idx = parseInt(selectedLightSel.value, 10) || 0;
+      attachToLight(idx);
+    });
+  }
+
+  if (resetLightsBtn) {
+    resetLightsBtn.addEventListener("click", () => {
+      defaultLightStates.forEach((s, i) => {
+        setLightEnabled(i, s.on);
+        setLightColor(i, s.color);
+        setLightIntensity(i, s.int);
+        setLightPos(i, s.x, s.y, s.z);
+
+        // Update UI controls too
+        const onEl = document.getElementById(`l${i+1}_on`);
+        const cEl = document.getElementById(`l${i+1}_color`);
+        const intEl = document.getElementById(`l${i+1}_int`);
+        const intV = document.getElementById(`l${i+1}_intv`);
+        const xEl = document.getElementById(`l${i+1}_x`);
+        const yEl = document.getElementById(`l${i+1}_y`);
+        const zEl = document.getElementById(`l${i+1}_z`);
+        const xV = document.getElementById(`l${i+1}_xv`);
+        const yV = document.getElementById(`l${i+1}_yv`);
+        const zV = document.getElementById(`l${i+1}_zv`);
+
+        if (onEl) onEl.checked = s.on;
+        if (cEl) cEl.value = s.color;
+        if (intEl) intEl.value = String(s.int);
+        if (intV) intV.textContent = String(s.int);
+        if (xEl) xEl.value = String(s.x);
+        if (yEl) yEl.value = String(s.y);
+        if (zEl) zEl.value = String(s.z);
+        if (xV) xV.textContent = Number(s.x).toFixed(1);
+        if (yV) yV.textContent = Number(s.y).toFixed(1);
+        if (zV) zV.textContent = Number(s.z).toFixed(1);
+      });
+
+      setHelperVisibility(showLightHelpersToggle?.checked ?? true);
+      tcontrols.detach();
+      lightStatusEl.textContent = "Lights reset";
+      setStatus("lights reset");
+    });
+  }
+
+  function wireLightUI(i) {
+    const onEl = document.getElementById(`l${i}_on`);
+    const cEl = document.getElementById(`l${i}_color`);
+    const intEl = document.getElementById(`l${i}_int`);
+    const intV = document.getElementById(`l${i}_intv`);
+    const xEl = document.getElementById(`l${i}_x`);
+    const yEl = document.getElementById(`l${i}_y`);
+    const zEl = document.getElementById(`l${i}_z`);
+    const xV = document.getElementById(`l${i}_xv`);
+    const yV = document.getElementById(`l${i}_yv`);
+    const zV = document.getElementById(`l${i}_zv`);
+
+    const idx = i - 1;
+
+    function syncPosLabels() {
+      if (xV) xV.textContent = Number(xEl.value).toFixed(1);
+      if (yV) yV.textContent = Number(yEl.value).toFixed(1);
+      if (zV) zV.textContent = Number(zEl.value).toFixed(1);
+    }
+
+    if (onEl) {
+      onEl.addEventListener("change", () => {
+        setLightEnabled(idx, onEl.checked);
+        setStatus(`Light ${i} ${onEl.checked ? "enabled" : "disabled"}`);
+      });
+    }
+    if (cEl) {
+      cEl.addEventListener("input", () => {
+        setLightColor(idx, cEl.value);
+      });
+    }
+    if (intEl) {
+      const upd = () => {
+        const v = parseFloat(intEl.value);
+        setLightIntensity(idx, v);
+        if (intV) intV.textContent = v.toFixed(1);
+      };
+      intEl.addEventListener("input", upd);
+      upd();
+    }
+
+    const posUpd = () => {
+      setLightPos(idx, parseFloat(xEl.value), parseFloat(yEl.value), parseFloat(zEl.value));
+      syncPosLabels();
+    };
+    if (xEl) xEl.addEventListener("input", posUpd);
+    if (yEl) yEl.addEventListener("input", posUpd);
+    if (zEl) zEl.addEventListener("input", posUpd);
+    posUpd();
+  }
+
+  wireLightUI(1);
+  wireLightUI(2);
+  wireLightUI(3);
+  wireLightUI(4);
+
+  if (dragLightsToggle) {
+    dragLightsToggle.addEventListener("change", () => {
+      if (!dragLightsToggle.checked) tcontrols.detach();
+      setStatus(dragLightsToggle.checked ? "light dragging enabled" : "light dragging disabled");
+    });
+  }
+
+  // Loader (DRACO optional)
+  const loader = new GLTFLoader();
+  const draco = new DRACOLoader();
+  draco.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/");
+  loader.setDRACOLoader(draco);
+
+  let currentRoot = null;
+
+  // Animation state
+  let mixer = null;
+  let clips = [];
+  let activeAction = null;
+  let animTimeScale = 1.0;
+
+  function setAnimInfo(text) { animInfoEl.textContent = text; }
+
+  function clearAnimUI() {
+    if (animClipSel) {
+      animClipSel.innerHTML = '<option value="">Animation clip…</option>';
+      animClipSel.disabled = true;
+    }
+    if (playAnimToggle) playAnimToggle.checked = false;
+    if (restartAnimBtn) restartAnimBtn.disabled = true;
+    setAnimInfo("—");
+  }
+
+  function stopAnimations() {
+    if (activeAction) { activeAction.stop(); activeAction = null; }
+    if (mixer) mixer.stopAllAction();
+    mixer = null;
+    clips = [];
+  }
+
+  function setActiveClip(idx) {
+    if (!mixer || !clips.length) return;
+    const clip = clips[idx];
+    if (!clip) return;
+
+    if (activeAction) activeAction.stop();
+    activeAction = mixer.clipAction(clip);
+    activeAction.reset();
+    activeAction.setLoop(THREE.LoopRepeat, Infinity);
+    activeAction.enabled = true;
+
+    if (playAnimToggle?.checked) activeAction.play();
+  }
+
+  function updateAnimEnabledState() {
+    const hasAnims = !!clips.length;
+    if (!hasAnims) {
+      if (playAnimToggle) playAnimToggle.checked = false;
+      return;
+    }
+    if (mixer) mixer.timeScale = (playAnimToggle?.checked ? animTimeScale : 0.0);
+    if (activeAction && playAnimToggle?.checked && !activeAction.isRunning()) activeAction.play();
+  }
+
+  function initAnimations(gltf) {
+    stopAnimations();
+    clips = Array.isArray(gltf.animations) ? gltf.animations : [];
+
+    if (!clips.length) {
+      clearAnimUI();
+      return;
+    }
+
+    mixer = new THREE.AnimationMixer(currentRoot);
+
+    if (animClipSel) {
+      animClipSel.disabled = false;
+      animClipSel.innerHTML = '<option value="">Animation clip…</option>';
+      clips.forEach((c, i) => {
+        const opt = document.createElement("option");
+        opt.value = String(i);
+        opt.textContent = (c.name && c.name.trim()) ? c.name : `Clip ${i+1}`;
+        animClipSel.appendChild(opt);
+      });
+      animClipSel.value = "0";
+    }
+
+    setAnimInfo(`${clips.length} clip(s)`);
+    if (restartAnimBtn) restartAnimBtn.disabled = false;
+
+    setActiveClip(0);
+    updateAnimEnabledState();
+  }
+
+  function syncAnimSpeedUI() {
+    if (!animSpeedSlider) return;
+    animTimeScale = parseFloat(animSpeedSlider.value);
+    if (animSpeedVal) animSpeedVal.textContent = `${animTimeScale.toFixed(2)}×`;
+    if (mixer) mixer.timeScale = (playAnimToggle?.checked ? animTimeScale : 0.0);
+  }
+  if (animSpeedSlider) { syncAnimSpeedUI(); animSpeedSlider.addEventListener("input", syncAnimSpeedUI); }
+
+  if (playAnimToggle) {
+    playAnimToggle.addEventListener("change", () => {
+      updateAnimEnabledState();
+      setStatus(playAnimToggle.checked ? "animations playing" : "animations paused");
+    });
+  }
+
+  if (animClipSel) {
+    animClipSel.addEventListener("change", () => {
+      const idx = parseInt(animClipSel.value || "0", 10);
+      setActiveClip(Number.isFinite(idx) ? idx : 0);
+      setStatus("animation clip selected");
+    });
+  }
+
+  if (restartAnimBtn) {
+    restartAnimBtn.disabled = true;
+    restartAnimBtn.addEventListener("click", () => {
+      if (!mixer || !activeAction) return;
+      activeAction.reset();
+      if (playAnimToggle?.checked) activeAction.play();
+      setStatus("animation restarted");
+    });
+  }
+
+  clearAnimUI();
+
+  function disposeModel(obj) {
+    obj.traverse((n) => {
+      if (n.isMesh) {
+        n.geometry?.dispose?.();
+        const mats = Array.isArray(n.material) ? n.material : [n.material];
+        mats.forEach((m) => {
+          if (!m) return;
+          ["map","normalMap","roughnessMap","metalnessMap","aoMap","emissiveMap","alphaMap"].forEach((k) => m[k]?.dispose?.());
+          m.dispose?.();
+        });
+      }
+    });
+  }
+
+  function clearModel() {
+    if (currentRoot) {
+      scene.remove(currentRoot);
+      disposeModel(currentRoot);
+      currentRoot = null;
+    }
+    stopAnimations();
+    clearAnimUI();
+    modelNameEl.textContent = "—";
+    trisEl.textContent = "—";
+    renderer.info.reset();
+    setStatus("cleared");
+  }
+
+  function computeTriangles(root) {
+    let tris = 0;
+    root.traverse((n) => {
+      if (n.isMesh && n.geometry) {
+        const g = n.geometry;
+        const pos = g.attributes.position?.count || 0;
+        tris += g.index ? (g.index.count / 3) : (pos / 3);
+        n.castShadow = true;
+        n.receiveShadow = true;
+      }
+    });
+    trisEl.textContent = Math.round(tris).toLocaleString();
+  }
+
+  function safeBounds(root) {
+    let box = new THREE.Box3().setFromObject(root);
+    let size = new THREE.Vector3();
+    box.getSize(size);
+    let maxDim = Math.max(size.x, size.y, size.z);
+
+    if (!isFinite(maxDim) || maxDim <= 1e-6) {
+      let best = null, bestCount = -1;
+      root.traverse((n) => {
+        if (n.isMesh && n.geometry?.attributes?.position) {
+          const c = n.geometry.attributes.position.count;
+          if (c > bestCount) { bestCount = c; best = n; }
+        }
+      });
+      if (best) {
+        box = new THREE.Box3().setFromObject(best);
+        box.getSize(size);
+        maxDim = Math.max(size.x, size.y, size.z);
+      }
+    }
+    return { box, size, maxDim };
+  }
+
+  function normalizeAndFrame(root) {
+    const { maxDim } = safeBounds(root);
+    if (!isFinite(maxDim) || maxDim <= 1e-6) {
+      showError("Model bounds invalid", new Error("The model has invalid bounds/geometry. Try re-exporting from Blender."));
+      return;
+    }
+
+    const box = new THREE.Box3().setFromObject(root);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+
+    const desired = 2.2;
+    const s = desired / maxDim;
+
+    root.position.sub(center);
+    root.scale.setScalar(s);
+
+    const box2 = new THREE.Box3().setFromObject(root);
+    const size2 = new THREE.Vector3();
+    const center2 = new THREE.Vector3();
+    box2.getSize(size2);
+    box2.getCenter(center2);
+
+    root.position.y += (size2.y * 0.5) - center2.y;
+
+    const fov = THREE.MathUtils.degToRad(camera.fov);
+    const fitDist = (Math.max(size2.x, size2.y, size2.z) / (2 * Math.tan(fov / 2))) * 1.35;
+
+    controls.target.set(0, Math.max(0.7, size2.y * 0.35), 0);
+    camera.position.set(fitDist * 1.0, fitDist * 0.6, fitDist * 1.25);
+    camera.near = Math.max(0.01, fitDist / 200);
+    camera.far = Math.max(50, fitDist * 150);
+    camera.updateProjectionMatrix();
+    controls.update();
+  }
+
+  async function loadFromBlob(blob, uiName) {
+    clearError();
+    clearModel();
+    renderer.info.reset();
+
+    const url = URL.createObjectURL(blob);
+    setStatus("loading…");
+
+    loader.load(
+      url,
+      (gltf) => {
+        URL.revokeObjectURL(url);
+        currentRoot = gltf.scene || gltf.scenes?.[0];
+        if (!currentRoot) {
+          showError("Loaded file but no scene found", new Error("glTF scene missing"));
+          setStatus("failed");
+          return;
+        }
+        scene.add(currentRoot);
+
+        modelNameEl.textContent = uiName;
+        computeTriangles(currentRoot);
+        normalizeAndFrame(currentRoot);
+
+        initAnimations(gltf);
+
+        setStatus("loaded ✓ (normalized + framed)");
+      },
+      undefined,
+      (err) => {
+        URL.revokeObjectURL(url);
+        showError("Failed to load GLB", err);
+        setStatus("failed");
+      }
+    );
+  }
+
+  // Drag & drop
+  let dragCounter = 0;
+  window.addEventListener("dragenter", (e) => { e.preventDefault(); dragCounter++; drop.style.display = "grid"; });
+  window.addEventListener("dragleave", (e) => { e.preventDefault(); dragCounter--; if (dragCounter <= 0) drop.style.display = "none"; });
+  window.addEventListener("dragover", (e) => { e.preventDefault(); });
+  window.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    drop.style.display = "none";
+
+    const f = e.dataTransfer?.files?.[0];
+    if (!f) return showError("Drop failed", new Error("No file detected in drop."));
+    if (!f.name.toLowerCase().endsWith(".glb")) return showError("Wrong file type", new Error("Please drop a .glb file."));
+    await loadFromBlob(f, f.name);
+  });
+
+  // File picker
+  fileInput.addEventListener("change", async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith(".glb")) return showError("Wrong file type", new Error("Please choose a .glb file."));
+    await loadFromBlob(f, f.name);
+    fileInput.value = "";
+  });
+
+  // Sample loader
+  loadSampleBtn.onclick = () => {
+    const url = samples.value;
+    if (!url) return;
+
+    clearError();
+    clearModel();
+    renderer.info.reset();
+    setStatus("loading sample…");
+    modelNameEl.textContent = url.split("/").pop() || "sample";
+
+    loader.load(
+      url,
+      (gltf) => {
+        currentRoot = gltf.scene || gltf.scenes?.[0];
+        if (!currentRoot) {
+          showError("Sample loaded but no scene found", new Error("glTF scene missing"));
+          setStatus("failed");
+          return;
+        }
+        scene.add(currentRoot);
+        computeTriangles(currentRoot);
+        normalizeAndFrame(currentRoot);
+
+        initAnimations(gltf);
+
+        setStatus("loaded ✓ (normalized + framed)");
+      },
+      undefined,
+      (err) => {
+        showError("Failed to load sample", err);
+        setStatus("failed");
+      }
+    );
+  };
+
+  // Buttons
+  focusBtn.onclick = () => { if (currentRoot) { normalizeAndFrame(currentRoot); setStatus("refocused ✓"); } };
+  resetBtn.onclick = () => { if (currentRoot) { normalizeAndFrame(currentRoot); setStatus("reset view ✓"); } };
+  clearBtn.onclick = clearModel;
+
+  // Resize
+  function handleResize() {
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+
+    const stereoAspect = (w * 0.5) / h;
+    cameraL.fov = camera.fov; cameraR.fov = camera.fov;
+    cameraL.aspect = stereoAspect; cameraR.aspect = stereoAspect;
+    cameraL.near = camera.near; cameraR.near = camera.near;
+    cameraL.far = camera.far; cameraR.far = camera.far;
+    cameraL.updateProjectionMatrix();
+    cameraR.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", handleResize);
+
+  // Loop + FPS
+  let last = performance.now();
+  let fpsAcc = 0, fpsN = 0;
+  const clock = new THREE.Clock();
+
+  function animate(now) {
+    const dt = (now - last) / 1000;
+    last = now;
+
+    controls.update();
+
+    const delta = clock.getDelta();
+    if (mixer) mixer.update(delta);
+
+    // Keep lights synced if any orb moved externally
+    for (const L of userLights) syncLightTransforms(L);
+
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    if (stereoToggle?.checked) {
+      const right = new THREE.Vector3();
+      const up = new THREE.Vector3();
+      const forward = new THREE.Vector3();
+      camera.matrixWorld.extractBasis(right, up, forward);
+
+      const effectiveIPD = IPD * DEPTH;
+
+      cameraL.position.copy(camera.position).addScaledVector(right, -effectiveIPD * 0.5);
+      cameraR.position.copy(camera.position).addScaledVector(right,  effectiveIPD * 0.5);
+      cameraL.quaternion.copy(camera.quaternion);
+      cameraR.quaternion.copy(camera.quaternion);
+
+      const stereoAspect = (w * 0.5) / h;
+      if (cameraL.aspect !== stereoAspect) {
+        cameraL.aspect = stereoAspect;
+        cameraR.aspect = stereoAspect;
+        cameraL.updateProjectionMatrix();
+        cameraR.updateProjectionMatrix();
+      }
+
+      const mode = stereoModeSel?.value || "cross";
+      const swap = (mode === "cross");
+
+      renderer.setScissorTest(true);
+
+      renderer.setViewport(0, 0, Math.floor(w * 0.5), h);
+      renderer.setScissor(0, 0, Math.floor(w * 0.5), h);
+      renderer.render(scene, swap ? cameraR : cameraL);
+
+      renderer.setViewport(Math.floor(w * 0.5), 0, Math.ceil(w * 0.5), h);
+      renderer.setScissor(Math.floor(w * 0.5), 0, Math.ceil(w * 0.5), h);
+      renderer.render(scene, swap ? cameraL : cameraR);
+
+      renderer.setScissorTest(false);
+    } else {
+      renderer.render(scene, camera);
+    }
+
+    fpsAcc += 1 / Math.max(1e-4, dt);
+    fpsN++;
+    if (fpsN >= 12) {
+      fpsEl.textContent = (fpsAcc / fpsN).toFixed(0);
+      fpsAcc = 0; fpsN = 0;
+      drawsEl.textContent = renderer.info.render.calls.toString();
+    }
+    requestAnimationFrame(animate);
+  }
+
+
+  // ============================
+  // Config file persistence
+  // ============================
+  // This uses the File System Access API (Chromium / Edge) so the app can read/write
+  // a plain-text config file in the SAME folder as this HTML (after you "Link folder" once).
+  //
+  // File name: glb_viewer_config.txt (JSON text)
+  //
+  // Note: Browsers cannot silently access local folders without permission. The first time,
+  // you must click "Link folder" and choose the folder. After that, the app will auto-load
+  // on startup if the permission is still granted.
+
+  const CONFIG_FILENAME = "glb_viewer_config.txt";
+  const LS_CONFIG_KEY = "glb_viewer_config_json_v1";
+
+  // --- Minimal IndexedDB helpers for storing a directory handle ---
+  const IDB_DB = "glb_viewer_cfg_db";
+  const IDB_STORE = "kv";
+
+  function idbOpen() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_DB, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function idbSet(key, value) {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function idbGet(key) {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function ensurePermission(handle, readWrite) {
+    if (!handle) return false;
+    const opts = { mode: readWrite ? "readwrite" : "read" };
+    try {
+      const q = await handle.queryPermission(opts);
+      if (q === "granted") return true;
+      const r = await handle.requestPermission(opts);
+      return r === "granted";
+    } catch {
+      return false;
+    }
+  }
+
+  let linkedDirHandle = null;
+
+  function cfgStatus(msg) {
+    if (cfgStatusEl) cfgStatusEl.textContent = msg;
+  }
+
+  function gatherSettings() {
+    // Read from UI (and live light orb positions) to make a single config object.
+    const lights = [1,2,3,4].map((n, idx) => {
+      const onEl = document.getElementById(`l${n}_on`);
+      const cEl  = document.getElementById(`l${n}_color`);
+      const intEl= document.getElementById(`l${n}_int`);
+
+      // Prefer real scene position (orb) if available
+      const orb = userLights?.[idx]?.orb;
+      const x = orb?.position?.x ?? parseFloat(document.getElementById(`l${n}_x`)?.value ?? "0");
+      const y = orb?.position?.y ?? parseFloat(document.getElementById(`l${n}_y`)?.value ?? "0");
+      const z = orb?.position?.z ?? parseFloat(document.getElementById(`l${n}_z`)?.value ?? "0");
+
+      return {
+        on: !!onEl?.checked,
+        color: cEl?.value || "#ffffff",
+        intensity: parseFloat(intEl?.value ?? "1"),
+        x, y, z
+      };
+    });
+
+    return {
+      version: 1,
+      uiHidden: document.body.classList.contains("ui-hidden"),
+      stereo: {
+        enabled: !!stereoToggle?.checked,
+        mode: stereoModeSel?.value || "cross",
+        ipd: parseFloat(ipdSlider?.value ?? String(IPD)),
+        depth: parseFloat(depthSlider?.value ?? String(DEPTH))
+      },
+      background: bgPicker?.value || "#87CEEB",
+      floor: floorPicker?.value || "#E9EEF3",
+      animations: {
+        play: !!playAnimToggle?.checked,
+        speed: parseFloat(animSpeedSlider?.value ?? String(animTimeScale)),
+        clipIndex: parseInt(animClipSel?.value || "0", 10) || 0
+      },
+      lights: {
+        drag: !!dragLightsToggle?.checked,
+        helpers: !!showLightHelpersToggle?.checked,
+        gizmoMode: gizmoModeSel?.value || "translate",
+        selected: parseInt(selectedLightSel?.value || "0", 10) || 0,
+        items: lights
+      }
+    };
+  }
+
+  function applySettings(cfg) {
+    if (!cfg || typeof cfg !== "object") return;
+
+    // UI hidden
+    if (typeof cfg.uiHidden === "boolean") setUIHidden(cfg.uiHidden);
+
+    // Stereo
+    if (cfg.stereo) {
+      if (typeof cfg.stereo.enabled === "boolean" && stereoToggle) stereoToggle.checked = cfg.stereo.enabled;
+      if (cfg.stereo.mode && stereoModeSel) stereoModeSel.value = cfg.stereo.mode;
+
+      if (typeof cfg.stereo.ipd === "number" && ipdSlider) {
+        ipdSlider.value = String(cfg.stereo.ipd);
+        syncIPDUI();
+      }
+      if (typeof cfg.stereo.depth === "number" && depthSlider) {
+        depthSlider.value = String(cfg.stereo.depth);
+        syncDepthUI();
+      }
+    }
+
+    // Background / floor
+    if (cfg.background && typeof cfg.background === "string") setBackground(cfg.background);
+    if (cfg.floor && typeof cfg.floor === "string") setFloorColor(cfg.floor);
+
+    // Animations
+    if (cfg.animations) {
+      if (typeof cfg.animations.speed === "number" && animSpeedSlider) {
+        animSpeedSlider.value = String(cfg.animations.speed);
+        syncAnimSpeedUI();
+      }
+      if (typeof cfg.animations.play === "boolean" && playAnimToggle) {
+        playAnimToggle.checked = cfg.animations.play;
+        updateAnimEnabledState();
+      }
+      // clipIndex will only apply if a model with clips is loaded
+      if (typeof cfg.animations.clipIndex === "number" && animClipSel) {
+        // If clips aren't ready yet, we still set the selector value; it will take effect when clips populate.
+        animClipSel.value = String(cfg.animations.clipIndex);
+        const idx = cfg.animations.clipIndex;
+        if (Number.isFinite(idx)) setActiveClip(idx);
+      }
+    }
+
+    // Lights
+    if (cfg.lights) {
+      if (typeof cfg.lights.drag === "boolean" && dragLightsToggle) dragLightsToggle.checked = cfg.lights.drag;
+      if (typeof cfg.lights.helpers === "boolean" && showLightHelpersToggle) showLightHelpersToggle.checked = cfg.lights.helpers;
+      if (cfg.lights.gizmoMode && gizmoModeSel) {
+        gizmoModeSel.value = cfg.lights.gizmoMode;
+        tcontrols.setMode(cfg.lights.gizmoMode === "rotate" ? "rotate" : "translate");
+      }
+      if (typeof cfg.lights.selected === "number" && selectedLightSel) selectedLightSel.value = String(cfg.lights.selected);
+
+      const items = Array.isArray(cfg.lights.items) ? cfg.lights.items : [];
+      for (let i = 0; i < 4; i++) {
+        const s = items[i];
+        if (!s) continue;
+
+        const onEl = document.getElementById(`l${i+1}_on`);
+        const cEl  = document.getElementById(`l${i+1}_color`);
+        const intEl= document.getElementById(`l${i+1}_int`);
+        const intV = document.getElementById(`l${i+1}_intv`);
+        const xEl  = document.getElementById(`l${i+1}_x`);
+        const yEl  = document.getElementById(`l${i+1}_y`);
+        const zEl  = document.getElementById(`l${i+1}_z`);
+        const xV   = document.getElementById(`l${i+1}_xv`);
+        const yV   = document.getElementById(`l${i+1}_yv`);
+        const zV   = document.getElementById(`l${i+1}_zv`);
+
+        if (typeof s.on === "boolean") {
+          if (onEl) onEl.checked = s.on;
+          setLightEnabled(i, s.on);
+        }
+        if (typeof s.color === "string") {
+          if (cEl) cEl.value = s.color;
+          setLightColor(i, s.color);
+        }
+        if (typeof s.intensity === "number") {
+          if (intEl) intEl.value = String(s.intensity);
+          if (intV) intV.textContent = s.intensity.toFixed(1);
+          setLightIntensity(i, s.intensity);
+        }
+        const px = (typeof s.x === "number") ? s.x : parseFloat(xEl?.value ?? "0");
+        const py = (typeof s.y === "number") ? s.y : parseFloat(yEl?.value ?? "0");
+        const pz = (typeof s.z === "number") ? s.z : parseFloat(zEl?.value ?? "0");
+
+        if (xEl) xEl.value = String(px);
+        if (yEl) yEl.value = String(py);
+        if (zEl) zEl.value = String(pz);
+        if (xV) xV.textContent = Number(px).toFixed(1);
+        if (yV) yV.textContent = Number(py).toFixed(1);
+        if (zV) zV.textContent = Number(pz).toFixed(1);
+        setLightPos(i, px, py, pz);
+      }
+
+      setHelperVisibility(showLightHelpersToggle?.checked ?? true);
+
+      // Attach selection if possible
+      const sel = parseInt(selectedLightSel?.value || "0", 10) || 0;
+      attachToLight(sel);
+    }
+
+    setStatus("settings applied");
+  }
+
+  async function writeConfigToDisk(cfg) {
+    const jsonText = JSON.stringify(cfg, null, 2);
+
+    // Always store a backup in localStorage
+    try { localStorage.setItem(LS_CONFIG_KEY, jsonText); } catch {}
+
+    if (!linkedDirHandle) throw new Error("No linked folder. Click “Link folder” first.");
+
+    const ok = await ensurePermission(linkedDirHandle, true);
+    if (!ok) throw new Error("Folder permission not granted.");
+
+    const fileHandle = await linkedDirHandle.getFileHandle(CONFIG_FILENAME, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(jsonText);
+    await writable.close();
+  }
+
+  async function readConfigFromDisk() {
+    if (linkedDirHandle) {
+      const ok = await ensurePermission(linkedDirHandle, false);
+      if (ok) {
+        const fileHandle = await linkedDirHandle.getFileHandle(CONFIG_FILENAME, { create: true });
+        const file = await fileHandle.getFile();
+        const text = await file.text();
+        if (text && text.trim().length) return JSON.parse(text);
+      }
+    }
+
+    // Fallback to localStorage
+    try {
+      const t = localStorage.getItem(LS_CONFIG_KEY);
+      if (t && t.trim().length) return JSON.parse(t);
+    } catch {}
+    return null;
+  }
+
+  async function linkFolder() {
+    if (!window.showDirectoryPicker) {
+      throw new Error("This browser doesn't support folder access. Use Edge/Chrome (Chromium).");
+    }
+    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+    const ok = await ensurePermission(handle, true);
+    if (!ok) throw new Error("Folder permission not granted.");
+    linkedDirHandle = handle;
+    await idbSet("dirHandle", handle);
+    cfgStatus(`Config: linked (${CONFIG_FILENAME})`);
+  }
+
+  async function restoreLinkedFolderIfPossible() {
+    try {
+      const h = await idbGet("dirHandle");
+      if (!h) return false;
+      const ok = await ensurePermission(h, false);
+      if (!ok) return false;
+      linkedDirHandle = h;
+      cfgStatus(`Config: linked (${CONFIG_FILENAME})`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function initConfigPersistence() {
+    // Restore linked folder handle if the browser allows it
+    const linked = await restoreLinkedFolderIfPossible();
+    if (!linked) cfgStatus("Config: not linked");
+
+    // Auto-load config (from folder if linked, otherwise localStorage fallback)
+    const cfg = await readConfigFromDisk();
+    if (cfg) {
+      applySettings(cfg);
+      setStatus("config loaded on startup");
+    }
+  }
+
+  if (linkFolderBtn) {
+    linkFolderBtn.addEventListener("click", async () => {
+      try {
+        await linkFolder();
+        setStatus("folder linked");
+        // After linking, auto-load config (if file exists)
+        const cfg = await readConfigFromDisk();
+        if (cfg) applySettings(cfg);
+      } catch (e) {
+        showError("Link folder failed", e);
+      }
+    });
+  }
+
+  if (saveCfgBtn) {
+    saveCfgBtn.addEventListener("click", async () => {
+      try {
+        const cfg = gatherSettings();
+        await writeConfigToDisk(cfg);
+        cfgStatus(`Config: saved (${CONFIG_FILENAME})`);
+        setStatus("settings saved");
+      } catch (e) {
+        showError("Save settings failed", e);
+      }
+    });
+  }
+
+  if (loadCfgBtn) {
+    loadCfgBtn.addEventListener("click", async () => {
+      try {
+        const cfg = await readConfigFromDisk();
+        if (!cfg) throw new Error("No config found yet. Click “Save settings” first.");
+        applySettings(cfg);
+        cfgStatus(`Config: loaded (${CONFIG_FILENAME})`);
+      } catch (e) {
+        showError("Load settings failed", e);
+      }
+    });
+  }
+
+  // Save whenever you close / refresh the tab (best effort)
+  window.addEventListener("beforeunload", () => {
+    try {
+      const cfg = gatherSettings();
+      localStorage.setItem(LS_CONFIG_KEY, JSON.stringify(cfg));
+    } catch {}
+  });
+
+  // Kick off auto-load on startup
+  (async () => {
+    try { await initConfigPersistence(); }
+    catch (e) { /* don't block startup */ console.warn("Config init failed:", e); }
+  })();
+
+
+  handleResize();
+  requestAnimationFrame(animate);
+</script>
+</body>
+</html>
